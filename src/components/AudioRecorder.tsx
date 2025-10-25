@@ -31,6 +31,8 @@ type AudioRecorderProps = {
   disabled?: boolean;
   file?: File | null;
   onDurationChange?: (durationSeconds: number) => void;
+  onStartRecording?: () => void;
+  onStopRecording?: () => void;
 };
 
 const formatDuration = (seconds: number) => {
@@ -49,7 +51,9 @@ const AudioRecorder = ({
   onRecordingComplete,
   disabled = false,
   file,
-  onDurationChange
+  onDurationChange,
+  onStartRecording,
+  onStopRecording
 }: AudioRecorderProps) => {
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -123,7 +127,8 @@ const AudioRecorder = ({
     setIsRecording(false);
     resetTimer();
     recorderRef.current.stop();
-  }, [resetTimer]);
+    if (typeof onStopRecording === "function") onStopRecording();
+  }, [resetTimer, onStopRecording]);
 
   const startRecording = useCallback(async () => {
     if (disabled || isRecording) return;
@@ -157,6 +162,7 @@ const AudioRecorder = ({
       mediaRecorder.start();
 
       setIsRecording(true);
+      if (typeof onStartRecording === "function") onStartRecording();
       timerRef.current = window.setInterval(() => {
         setDuration((value) => value + 1);
       }, 1000);
@@ -172,7 +178,7 @@ const AudioRecorder = ({
       showError("Could not access the microphone. Please allow permission.");
       cleanupStream();
     }
-  }, [audioURL, cleanupStream, disabled, handleStop, isRecording, onRecordingComplete, showError]);
+  }, [audioURL, cleanupStream, disabled, handleStop, isRecording, onRecordingComplete, showError, onStartRecording]);
 
   const cancelRecording = useCallback(() => {
     if (isRecording && recorderRef.current?.state === "recording") {

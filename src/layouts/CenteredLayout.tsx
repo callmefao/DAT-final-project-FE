@@ -5,13 +5,17 @@ import Toolbar from "../components/Toolbar";
 const CenteredLayout = ({ children }: PropsWithChildren) => {
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900">
+      {/* site-wide background */}
+      <div className="fun-bg-full" aria-hidden>
+        <img src="/fun_bg.jpg" alt="background" />
+        <div className="fun-overlay-full" />
+      </div>
+
       <Toolbar />
 
-      <main className="flex flex-1 justify-center px-4 py-10">
-        <div className="w-full max-w-5xl">
-          <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-xl shadow-slate-200/60">
-            {children}
-          </div>
+      <main className="relative z-10 flex flex-1 justify-center px-4 pt-16 pb-10">
+        <div className="w-full">
+          <div className="p-0">{children}</div>
         </div>
       </main>
 
