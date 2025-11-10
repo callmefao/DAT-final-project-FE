@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 
 import { useErrorOverlay } from "../hooks/useErrorOverlay";
+import { convertToWav } from "../utils/audioConverter";
 
 const buildMimeType = () => {
   if (typeof window === "undefined" || !window.MediaRecorder) {
@@ -33,6 +34,7 @@ type AudioRecorderProps = {
   onDurationChange?: (durationSeconds: number) => void;
   onStartRecording?: () => void;
   onStopRecording?: () => void;
+  maxDuration?: number; // Maximum recording duration in seconds
 };
 
 const formatDuration = (seconds: number) => {
@@ -53,7 +55,8 @@ const AudioRecorder = ({
   file,
   onDurationChange,
   onStartRecording,
-  onStopRecording
+  onStopRecording,
+  maxDuration
 }: AudioRecorderProps) => {
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -91,35 +94,43 @@ const AudioRecorder = ({
     cleanupStream();
   }, [cleanupStream, resetTimer]);
 
-  const handleStop = useCallback(() => {
+  const handleStop = useCallback(async () => {
     setIsProcessing(true);
     const mimeType = mimeTypeRef.current ?? recorderRef.current?.mimeType ?? "audio/webm";
     const blob = new Blob(chunksRef.current, { type: mimeType });
 
     if (!blob.size) {
-  showError("No audio captured. Please try recording again.");
+      showError("No audio captured. Please try recording again.");
       onRecordingComplete(null);
       setIsProcessing(false);
       resetRecordingState();
       return;
     }
 
-    const extension = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "m4a" : "webm";
-    const recordingFile = new File([blob], `voice-recording-${Date.now()}.${extension}`, {
-      type: mimeType
-    });
+    try {
+      // Convert to WAV format
+      const wavBlob = await convertToWav(blob);
+      const recordingFile = new File([wavBlob], `voice-recording-${Date.now()}.wav`, {
+        type: 'audio/wav'
+      });
 
-    const objectURL = URL.createObjectURL(blob);
-    setAudioURL((previous) => {
-      if (previous) {
-        URL.revokeObjectURL(previous);
-      }
-      return objectURL;
-    });
+      const objectURL = URL.createObjectURL(wavBlob);
+      setAudioURL((previous) => {
+        if (previous) {
+          URL.revokeObjectURL(previous);
+        }
+        return objectURL;
+      });
 
-    onRecordingComplete(recordingFile);
-    setIsProcessing(false);
-    resetRecordingState();
+      onRecordingComplete(recordingFile);
+    } catch (error) {
+      console.error('Error converting audio to WAV:', error);
+      showError("Failed to process audio. Please try again.");
+      onRecordingComplete(null);
+    } finally {
+      setIsProcessing(false);
+      resetRecordingState();
+    }
   }, [onRecordingComplete, resetRecordingState, showError]);
 
   const stopRecording = useCallback(() => {
@@ -164,7 +175,14 @@ const AudioRecorder = ({
       setIsRecording(true);
       if (typeof onStartRecording === "function") onStartRecording();
       timerRef.current = window.setInterval(() => {
-        setDuration((value) => value + 1);
+        setDuration((value) => {
+          const newValue = value + 1;
+          // Auto-stop when reaching maxDuration
+          if (maxDuration && newValue >= maxDuration) {
+            stopRecording();
+          }
+          return newValue;
+        });
       }, 1000);
 
       if (audioURL) {
@@ -178,7 +196,7 @@ const AudioRecorder = ({
       showError("Could not access the microphone. Please allow permission.");
       cleanupStream();
     }
-  }, [audioURL, cleanupStream, disabled, handleStop, isRecording, onRecordingComplete, showError, onStartRecording]);
+  }, [audioURL, cleanupStream, disabled, handleStop, isRecording, onRecordingComplete, showError, onStartRecording, maxDuration, stopRecording]);
 
   const cancelRecording = useCallback(() => {
     if (isRecording && recorderRef.current?.state === "recording") {
@@ -256,21 +274,29 @@ const AudioRecorder = ({
 
           <div className="space-y-1">
             <p className="text-sm font-semibold text-slate-900">
-              {supported ? (isRecording ? "Recording in progress" : "Record a fresh sample") : "Recording not supported"}
+              {supported ? (isRecording ? "Đang ghi âm" : "Ghi âm mới") : "Không hỗ trợ ghi âm"}
             </p>
             <p className="text-xs text-slate-500">
               {supported
                 ? isRecording
-                  ? "Speak clearly and tap stop when you're done."
-                  : "Use your microphone to capture audio instantly."
-                : "Your browser doesn't support microphone recording."}
+                  ? maxDuration
+                    ? `Đọc rõ ràng câu trên. Sẽ tự động dừng sau ${maxDuration} giây.`
+                    : "Đọc rõ ràng và nhấn dừng khi hoàn tất."
+                  : "Nhấn nút bắt đầu để ghi âm bằng micro."
+                : "Trình duyệt không hỗ trợ ghi âm micro."}
             </p>
           </div>
 
           {supported && (
             <div className="flex items-center gap-2 rounded-full bg-slate-100 px-4 py-2 text-xs font-medium text-slate-600">
-              <span className={clsx(isRecording ? "text-red-500" : "text-slate-500")}>Duration</span>
-              <span className="tabular-nums text-sm text-slate-800">{formatDuration(duration)}</span>
+              <span className={clsx(isRecording ? "text-red-500" : "text-slate-500")}>
+                {maxDuration && isRecording ? "Còn lại" : "Thời lượng"}
+              </span>
+              <span className="tabular-nums text-sm text-slate-800">
+                {maxDuration && isRecording 
+                  ? formatDuration(Math.max(0, maxDuration - duration))
+                  : formatDuration(duration)}
+              </span>
               {isRecording && <span className="ml-1 inline-flex h-2 w-2 animate-pulse rounded-full bg-red-500" />}
             </div>
           )}
@@ -284,7 +310,7 @@ const AudioRecorder = ({
               onClick={startRecording}
               disabled={disabled || isProcessing}
             >
-              Start recording
+              Bắt đầu ghi âm
             </button>
           )}
 
@@ -295,14 +321,14 @@ const AudioRecorder = ({
                 className="rounded-full bg-red-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-red-500/90"
                 onClick={stopRecording}
               >
-                Stop
+                Dừng
               </button>
               <button
                 type="button"
                 className="rounded-full bg-slate-200 px-5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-300"
                 onClick={cancelRecording}
               >
-                Cancel
+                Hủy
               </button>
             </>
           )}
@@ -318,7 +344,7 @@ const AudioRecorder = ({
                 setDuration(0);
               }}
             >
-              Clear recording
+              Xóa ghi âm
             </button>
           )}
         </div>

@@ -4,7 +4,15 @@ import clsx from "clsx";
 import { useAuth } from "../../hooks/useAuth";
 import { useErrorOverlay } from "../../hooks/useErrorOverlay";
 import { getErrorMessage } from "../../utils/error";
-import { sendTextMessage, sendVoiceMessage } from "../../api/chatApi";
+import { 
+  createChatSession,
+  getChatSessions,
+  getChatSessionDetail,
+  sendTextMessage, 
+  sendVoiceMessage,
+  deleteChatSession
+} from "../../api/chatApi";
+import type { ChatMessageData } from "../../types/api";
 import Sidebar, { type ChatSessionSummary } from "./components/Sidebar";
 import ChatArea from "./components/ChatArea";
 import type { ChatMessage } from "./components/MessageBubble";
@@ -24,17 +32,6 @@ const generateId = (prefix: string) => {
   return `${prefix}-${Date.now()}-${Math.round(Math.random() * 10_000)}`;
 };
 
-const createSession = (title: string): ChatSession => {
-  const timestamp = new Date().toISOString();
-  return {
-    id: generateId("session"),
-    title,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    messages: []
-  };
-};
-
 const formatTime = (date: Date) =>
   date.toLocaleTimeString([], {
     hour: "2-digit",
@@ -51,13 +48,26 @@ const formatSessionUpdatedAt = (timestamp: string) => {
   });
 };
 
+/**
+ * Convert API message data to UI message format
+ */
+const convertApiMessageToUiMessage = (apiMessage: ChatMessageData): ChatMessage => {
+  const timestamp = formatTime(new Date(apiMessage.time));
+  return {
+    id: generateId("message"),
+    sender: apiMessage.role === "human" ? "user" : "bot",
+    type: "text",
+    content: apiMessage.message,
+    timestamp
+  };
+};
+
 const VoiceChatPage = () => {
   const { user } = useAuth();
   const { showError } = useErrorOverlay();
 
-  const initialSession = useMemo(() => createSession("Voice session 1"), []);
-  const [sessions, setSessions] = useState<ChatSession[]>([initialSession]);
-  const [activeSessionId, setActiveSessionId] = useState<string>(initialSession.id);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const sessionCounterRef = useRef(1);
 
   const [isSendingText, setIsSendingText] = useState(false);
@@ -74,7 +84,62 @@ const VoiceChatPage = () => {
     };
   }, []);
 
-  const activeSession = useMemo(() => sessions.find((session) => session.id === activeSessionId) ?? null, [sessions, activeSessionId]);
+  // Load all sessions when user is authenticated
+  useEffect(() => {
+    const loadSessions = async () => {
+      if (!user?.username) {
+        return;
+      }
+
+      try {
+        const sessionIds = await getChatSessions(user.username);
+        
+        // Load details for each session
+        const sessionDetails = await Promise.all(
+          sessionIds.map(async (sessionId) => {
+            try {
+              const detail = await getChatSessionDetail(user.username!, sessionId);
+              return {
+                id: detail.session_id,
+                title: detail.session_name,
+                createdAt: detail.created_at,
+                updatedAt: detail.created_at, // Use created_at as updatedAt initially
+                messages: detail.messages.map(convertApiMessageToUiMessage)
+              };
+            } catch {
+              // If a session fails to load, skip it
+              return null;
+            }
+          })
+        );
+
+        // Filter out null values and sort by created date (newest first)
+        const validSessions = sessionDetails
+          .filter((session): session is ChatSession => session !== null)
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+        setSessions(validSessions);
+        
+        // Set first session as active if available
+        if (validSessions.length > 0 && !activeSessionId) {
+          setActiveSessionId(validSessions[0].id);
+        }
+        
+        sessionCounterRef.current = validSessions.length;
+      } catch (error) {
+        const message = getErrorMessage(error, "Không thể tải danh sách phiên chat.");
+        showError(message);
+      }
+    };
+
+    loadSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.username]); // Only reload when username changes
+
+  const activeSession = useMemo(
+    () => sessions.find((session) => session.id === activeSessionId) ?? null,
+    [sessions, activeSessionId]
+  );
 
   const sessionSummaries: ChatSessionSummary[] = useMemo(
     () =>
@@ -126,17 +191,69 @@ const VoiceChatPage = () => {
     }));
   };
 
-  const handleCreateSession = () => {
-    sessionCounterRef.current += 1;
-    const newSession = createSession(`Voice session ${sessionCounterRef.current}`);
-    setSessions((previous) => [newSession, ...previous]);
-    setActiveSessionId(newSession.id);
-    setIsSidebarOpen(false);
+  const handleCreateSession = async () => {
+    if (!user?.username) {
+      ensureAuthenticated();
+      return;
+    }
+
+    try {
+      sessionCounterRef.current += 1;
+      const sessionName = `Voice session ${sessionCounterRef.current}`;
+      
+      // Create session via API
+      const { session_id } = await createChatSession(user.username, sessionName);
+      
+      // Add to local state
+      const newSession: ChatSession = {
+        id: session_id,
+        title: sessionName,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        messages: []
+      };
+      
+      setSessions((previous) => [newSession, ...previous]);
+      setActiveSessionId(session_id);
+      setIsSidebarOpen(false);
+    } catch (error) {
+      const message = getErrorMessage(error, "Không thể tạo phiên chat mới.");
+      showError(message);
+    }
   };
 
-  const handleSelectSession = (sessionId: string) => {
-    setActiveSessionId(sessionId);
-    setIsSidebarOpen(false);
+  const handleSelectSession = async (sessionId: string) => {
+    // If session is already in local state, just switch to it
+    const existingSession = sessions.find((s) => s.id === sessionId);
+    if (existingSession) {
+      setActiveSessionId(sessionId);
+      setIsSidebarOpen(false);
+      return;
+    }
+
+    // Otherwise, load it from API
+    if (!user?.username) {
+      ensureAuthenticated();
+      return;
+    }
+
+    try {
+      const detail = await getChatSessionDetail(user.username, sessionId);
+      const session: ChatSession = {
+        id: detail.session_id,
+        title: detail.session_name,
+        createdAt: detail.created_at,
+        updatedAt: detail.created_at,
+        messages: detail.messages.map(convertApiMessageToUiMessage)
+      };
+      
+      setSessions((previous) => [session, ...previous]);
+      setActiveSessionId(sessionId);
+      setIsSidebarOpen(false);
+    } catch (error) {
+      const message = getErrorMessage(error, "Không thể tải phiên chat.");
+      showError(message);
+    }
   };
 
   const handleSendText = async (text: string) => {
@@ -162,12 +279,12 @@ const VoiceChatPage = () => {
 
     try {
       setIsSendingText(true);
-      const response = await sendTextMessage(username, text);
+      const response = await sendTextMessage(username, activeSession.id, text);
       const botMessage: ChatMessage = {
         id: generateId("message-bot"),
         sender: "bot",
         type: "text",
-        content: response.message,
+        content: response.reply,
         timestamp: formatTime(new Date())
       };
       appendMessage(activeSession.id, botMessage);
@@ -221,31 +338,94 @@ const VoiceChatPage = () => {
 
     try {
       setIsSendingVoice(true);
-      const response = await sendVoiceMessage(username, {
-        file,
-        duration: meta?.duration
-      });
+      const response = await sendVoiceMessage(username, activeSession.id, file);
 
-      const botMessage: ChatMessage = {
-        id: generateId("message-bot"),
-        sender: "bot",
-        type: "text",
-        content: response.message,
-        timestamp: formatTime(new Date())
-      };
-      appendMessage(activeSession.id, botMessage);
+      // Show transcription if available and not empty
+      const transcript = response.transcript?.trim();
+      
+      // Check if transcript is valid (not empty and not placeholder)
+      if (transcript && 
+          transcript.length > 0 && 
+          transcript !== '(no transcription)' &&
+          transcript !== 'no transcription') {
+        const transcriptMessage: ChatMessage = {
+          id: generateId("message-transcript"),
+          sender: "user",
+          type: "text",
+          content: `[Transcription] ${transcript}`,
+          timestamp: formatTime(new Date())
+        };
+        appendMessage(activeSession.id, transcriptMessage);
+      }
+
+      // Show bot reply
+      const reply = response.reply?.trim();
+      
+      // Check if reply is valid (not empty and not placeholder)
+      if (!reply || 
+          reply.length === 0 || 
+          reply === '(no reply)' ||
+          reply === 'no reply') {
+        const botMessage: ChatMessage = {
+          id: generateId("message-bot"),
+          sender: "bot",
+          type: "text",
+          content: "⚠️ Không thể chuyển đổi giọng nói của bạn. Có thể do:\n• File audio không được hỗ trợ (thử định dạng khác)\n• Dịch vụ transcription đang bận\n• Kết nối với n8n bị gián đoạn\n\nVui lòng thử lại hoặc sử dụng tin nhắn văn bản.",
+          timestamp: formatTime(new Date())
+        };
+        appendMessage(activeSession.id, botMessage);
+      } else {
+        const botMessage: ChatMessage = {
+          id: generateId("message-bot"),
+          sender: "bot",
+          type: "text",
+          content: reply,
+          timestamp: formatTime(new Date())
+        };
+        appendMessage(activeSession.id, botMessage);
+      }
     } catch (error) {
+      console.error('Voice message error details:', {
+        error,
+        message: error instanceof Error ? error.message : 'Unknown error',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        response: (error as any)?.response?.data
+      });
       const message = getErrorMessage(error, "Không thể gửi tin nhắn thoại.");
       showError(message);
       appendMessage(activeSession.id, {
         id: generateId("message-system"),
         sender: "bot",
         type: "text",
-        content: "Xin lỗi, tôi không thể nghe thấy bạn lúc này.",
+        content: "Xin lỗi, đã có lỗi xảy ra khi gửi tin nhắn thoại. Vui lòng thử lại.",
         timestamp: formatTime(new Date())
       });
     } finally {
       setIsSendingVoice(false);
+    }
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    if (!user?.username) {
+      ensureAuthenticated();
+      return;
+    }
+
+    try {
+      // Call API to delete session
+      await deleteChatSession(user.username, sessionId);
+      
+      // Remove from local state
+      setSessions((previous) => previous.filter((session) => session.id !== sessionId));
+      
+      // If deleted session was active, switch to first available session or null
+      if (activeSessionId === sessionId) {
+        const remainingSessions = sessions.filter((session) => session.id !== sessionId);
+        setActiveSessionId(remainingSessions.length > 0 ? remainingSessions[0].id : null);
+      }
+    } catch (error) {
+      const message = getErrorMessage(error, "Không thể xóa phiên chat.");
+      showError(message);
     }
   };
 
@@ -257,7 +437,7 @@ const VoiceChatPage = () => {
   return (
     <div className="space-y-6">
       <section className="rounded-3xl bg-gradient-to-r from-primary/10 via-white to-secondary/10 p-8 text-slate-800 shadow-inner lg:p-10">
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col items-center text-center gap-2">
           <h1 className="text-3xl font-bold text-primary lg:text-4xl">Voice Chat with Chatbot</h1>
           <p className="text-sm text-slate-600 lg:text-base">
             Giữ cuộc trò chuyện tự nhiên với chatbot bằng giọng nói hoặc văn bản. Lịch sử trò chuyện của bạn sẽ xuất hiện ở bên trái.
@@ -287,6 +467,7 @@ const VoiceChatPage = () => {
               activeSessionId={activeSessionId}
               onSelect={handleSelectSession}
               onCreate={handleCreateSession}
+              onDelete={handleDeleteSession}
             />
           </div>
 
@@ -298,6 +479,7 @@ const VoiceChatPage = () => {
                   activeSessionId={activeSessionId}
                   onSelect={handleSelectSession}
                   onCreate={handleCreateSession}
+                  onDelete={handleDeleteSession}
                   isVisible
                   onClose={() => setIsSidebarOpen(false)}
                 />

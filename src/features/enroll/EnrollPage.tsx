@@ -4,6 +4,7 @@ import Button from "../../components/Button";
 import AudioRecorder from "../../components/AudioRecorder";
 import InputField from "../../components/InputField";
 import ResultCard from "../../components/ResultCard";
+import FileUploader from "../../components/FileUploader";
 import { enrollVoice } from "../../api/voiceApi";
 import type { EnrollResponse } from "../../types/api";
 import { useAuth } from "../../hooks/useAuth";
@@ -56,12 +57,12 @@ const EnrollPage = () => {
 
   const handleFinalize = async () => {
     if (!file) {
-      showError("Please record a voice sample before submitting.");
+      showError("Vui lòng ghi âm giọng nói trước khi gửi.");
       return;
     }
 
-    if (voiceDuration < 5) {
-      showError("Voice sample must be at least 5 seconds long.");
+    if (voiceDuration > 5) {
+      showError("Mẫu giọng nói không được vượt quá 5 giây.");
       return;
     }
 
@@ -169,13 +170,13 @@ const EnrollPage = () => {
                 <h3 className="text-2xl font-semibold">Voice Registration</h3>
                 <div className="border-t border-slate-200 my-2" />
 
-                <p className="text-sm text-slate-700">lease read the following sentence <span className="text-2xl font-bold fpt-accent">5 times</span>:</p>
-                <p className="text-lg font-semibold mt-2">"Vừng ơi mở ra"</p>
+                <p className="text-sm text-slate-700">Vui lòng đọc câu sau trong <span className="text-2xl font-bold fpt-accent">5 giây</span>:</p>
+                <p className="text-xl font-bold mt-2 text-primary">"Hãy cho tôi đăng nhập, vừng ơi mở ra"</p>
 
-                <div className="mt-4">
+                <div className="mt-4 space-y-3">
                   <AudioRecorder
-                    label="Voice sample"
-                    description="Click the mic and read the phrase clearly once."
+                    label="Ghi âm giọng nói"
+                    description="Nhấn mic và đọc câu trên rõ ràng trong vòng 5 giây."
                     onRecordingComplete={(f) => {
                       if (f) {
                         setFile(f);
@@ -185,6 +186,23 @@ const EnrollPage = () => {
                     file={file}
                     onStartRecording={() => setIsRecording(true)}
                     onStopRecording={() => setIsRecording(false)}
+                    maxDuration={5}
+                  />
+
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-slate-200"></div>
+                    </div>
+                    <div className="relative flex justify-center text-xs">
+                      <span className="bg-white px-2 text-slate-500">or</span>
+                    </div>
+                  </div>
+
+                  <FileUploader
+                    label="Upload audio file"
+                    description="Upload a pre-recorded voice sample for testing"
+                    onFileSelect={setFile}
+                    file={file}
                   />
 
                   {/* single recording mode — no progress dots */}

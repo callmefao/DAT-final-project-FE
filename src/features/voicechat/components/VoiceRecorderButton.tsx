@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent, TouchEvent } from "react";
 import clsx from "clsx";
 
+import { convertToWav } from "../../../utils/audioConverter";
+
 const preferredMimeTypes = [
   "audio/webm;codecs=opus",
   "audio/ogg;codecs=opus",
@@ -85,7 +87,7 @@ const VoiceRecorderButton = ({
     }
   }, [cleanupStream, onRecordingStateChange, resetTimer]);
 
-  const handleStop = useCallback(() => {
+  const handleStop = useCallback(async () => {
     setIsProcessing(true);
     const mimeType = mimeTypeRef.current ?? recorderRef.current?.mimeType ?? "audio/webm";
     const blob = new Blob(chunksRef.current, { type: mimeType });
@@ -97,13 +99,21 @@ const VoiceRecorderButton = ({
       return;
     }
 
-    const extension = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "m4a" : "webm";
-    const file = new File([blob], `voice-chat-${Date.now()}.${extension}`, { type: mimeType });
-    const audioUrl = URL.createObjectURL(blob);
+    try {
+      // Convert to WAV format for backend compatibility
+      const wavBlob = await convertToWav(blob);
+      const file = new File([wavBlob], `voice-chat-${Date.now()}.wav`, { type: 'audio/wav' });
+      const audioUrl = URL.createObjectURL(wavBlob);
 
-    onRecordingComplete(file, { audioUrl, duration });
-    setIsProcessing(false);
-    resetState();
+      onRecordingComplete(file, { audioUrl, duration });
+    } catch (error) {
+      console.error('Error converting audio to WAV:', error);
+      emitError("Failed to process audio. Please try again.");
+      onRecordingComplete(null);
+    } finally {
+      setIsProcessing(false);
+      resetState();
+    }
   }, [duration, emitError, onRecordingComplete, resetState]);
 
   const startTimer = useCallback(() => {

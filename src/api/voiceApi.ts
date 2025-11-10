@@ -9,6 +9,33 @@ const client = axios.create({
   timeout: 15000
 });
 
+// Add response interceptor to handle error responses
+client.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    // Log error details for debugging
+    console.error('API Error:', {
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message
+    });
+
+    // If there's a response with data, enhance the error object
+    if (error.response?.data) {
+      // Check for 'detail' field (common in FastAPI/Python backends for 403/422 errors)
+      if (error.response.data.detail) {
+        error.message = error.response.data.detail;
+      }
+      // Also check for 'message' field
+      else if (error.response.data.message) {
+        error.message = error.response.data.message;
+      }
+    }
+    
+    return Promise.reject(error);
+  }
+);
+
 type FormDataPayload = {
   file?: File | null;
   password?: string;

@@ -6,6 +6,7 @@ import Button from "../../components/Button";
 import AudioRecorder from "../../components/AudioRecorder";
 import InputField from "../../components/InputField";
 import ResultCard from "../../components/ResultCard";
+import FileUploader from "../../components/FileUploader";
 import { verifyVoice } from "../../api/voiceApi";
 import type { VerifyResponse } from "../../types/api";
 import { formatConfidence } from "../../utils/format";
@@ -41,7 +42,7 @@ const VerifyPage = () => {
     failureMessage: string
   ) => {
     setResult(response);
-    if (response.result === "accepted") {
+    if (response.status === "success") {
       const resolvedUsername = response.username ?? fallbackUsername;
       login({ username: resolvedUsername, hasVoiceProfile: true });
       toast.success(successMessage);
@@ -191,12 +192,35 @@ const VerifyPage = () => {
                 {method === "voice" && (
                   <form onSubmit={handleVoiceLogin} className="space-y-4">
                     <InputField label="Username" value={username} readOnly />
-                    <AudioRecorder
-                      label="Record a verification sample"
-                      description="Tap record and speak clearly to verify your identity."
-                      onRecordingComplete={(f) => setFile(f)}
-                      file={file}
-                    />
+                    
+                    <p className="text-sm text-slate-700">Vui lòng đọc câu sau trong <span className="text-xl font-bold fpt-accent">5 giây</span>:</p>
+                    <p className="text-lg font-bold text-primary">"Hãy cho tôi đăng nhập, vừng ơi mở ra"</p>
+                    
+                    <div className="space-y-3">
+                      <AudioRecorder
+                        label="Ghi âm xác thực"
+                        description="Nhấn ghi âm và đọc câu trên rõ ràng trong vòng 5 giây."
+                        onRecordingComplete={(f) => setFile(f)}
+                        file={file}
+                        maxDuration={5}
+                      />
+                      
+                      <div className="relative">
+                        <div className="absolute inset-0 flex items-center">
+                          <div className="w-full border-t border-slate-200"></div>
+                        </div>
+                        <div className="relative flex justify-center text-xs">
+                          <span className="bg-white px-2 text-slate-500">or</span>
+                        </div>
+                      </div>
+
+                      <FileUploader
+                        label="Upload audio file"
+                        description="Upload a pre-recorded voice sample for testing"
+                        onFileSelect={setFile}
+                        file={file}
+                      />
+                    </div>
 
                     <div className="flex gap-3">
                       <Button type="submit" className="fpt-accent-bg flex-1" isLoading={isVoiceLoading}>
@@ -210,7 +234,7 @@ const VerifyPage = () => {
                           setResult(null);
                         }}
                       >
-                        Clear recording
+                        Clear
                       </Button>
                     </div>
                   </form>
@@ -219,9 +243,9 @@ const VerifyPage = () => {
                 {result && (
                   <div className="mt-4">
                     <ResultCard
-                      status={result.result === "accepted" ? "success" : "error"}
-                      title={result.result === "accepted" ? "Verification successful" : "Verification failed"}
-                      subtitle={`Confidence: ${formatConfidence(result.score)}`}
+                      status={result.status === "success" ? "success" : "error"}
+                      title={result.status === "success" ? "Verification successful" : "Verification failed"}
+                      subtitle={`Confidence: ${formatConfidence(result.score)} | Assist: ${result.assist}`}
                       score={result.score}
                     />
                   </div>
